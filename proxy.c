@@ -14,12 +14,12 @@
 #define BUFSIZE         1024*1024
 #define LOGFILENAME     ("proxy.log")
 
-#define START_INFO      {printf("\033[36m"); fflush(stdout);}
-#define START_SUCCESS   {printf("\033[32m"); fflush(stdout);}
-#define START_NOTICE    {printf("\033[33m"); fflush(stdout);}
-#define START_ERROR     {printf("\033[31m"); fflush(stdout);}
-#define START_QUOTE     {printf("\033[35m"); fflush(stdout);}
-#define END_MESSAGE     {printf("\033[0m"); fflush(stdout);}
+#define START_INFO      do {printf("\033[36m"); fflush(stdout);} while (0)
+#define START_SUCCESS   do {printf("\033[32m"); fflush(stdout);} while (0)
+#define START_NOTICE    do {printf("\033[33m"); fflush(stdout);} while (0)
+#define START_ERROR     do {printf("\033[31m"); fflush(stdout);} while (0)
+#define START_QUOTE     do {printf("\033[35m"); fflush(stdout);} while (0)
+#define END_MESSAGE     do {printf("\033[0m"); fflush(stdout);} while (0)
 
 /*
  * Function prototypes
