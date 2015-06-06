@@ -121,6 +121,7 @@ void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t c
     int request_port;
     struct addrinfo *serverAddrInfo;
     int getaddrinfoResult;
+    struct sockaddr_in serverAddr;
 
     /* read HTTP header */
     if ((readResult = readUntil(connFD, buf, sizeof(buf), "\r\n\r\n")) == -1)
@@ -159,15 +160,18 @@ void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t c
         START_ERROR;
         printf("DNS lookup failure: %s\n", gai_strerror(getaddrinfoResult));
         END_MESSAGE;
+        return;
     }
     else
     {
-        START_INFO;
-        printf("resolv:\t%s\n", inet_ntoa(((struct sockaddr_in*)serverAddrInfo->ai_addr)->sin_addr));
-        END_MESSAGE;
-        /* finalize */
+        memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
         freeaddrinfo(serverAddrInfo);
+        START_INFO;
+        printf("resolv:\t%s\n", inet_ntoa(serverAddr.sin_addr));
+        END_MESSAGE;
     }
+
+    /* connect to end server */
 }
 
 /*
