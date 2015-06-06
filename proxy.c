@@ -228,6 +228,7 @@ void *handleClientRequest(void *job)
         /* DNS lookup & get serverAddr */
         if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
         {
+            free(request_host);
             START_ERROR;
             printf("DNS lookup failure\n");
             END_MESSAGE;
