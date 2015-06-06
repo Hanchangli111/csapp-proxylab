@@ -234,11 +234,11 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     printf("host:\t%s\nport:\t%d\n", request_host, request_port);
     END_MESSAGE;
 #endif
-    free(request_host);
 
     /* DNS lookup & get serverAddr */
     if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
     {
+        free(request_host);
         START_ERROR;
         printf("DNS lookup failure: %s\n", gai_strerror(getaddrinfoResult));
         END_MESSAGE;
@@ -246,6 +246,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     }
     else
     {
+        free(request_host);
         memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
         freeaddrinfo(serverAddrInfo);
 #ifdef DEBUG
