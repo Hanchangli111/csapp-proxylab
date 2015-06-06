@@ -42,9 +42,11 @@ int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
 int readUntil(int fd, void *buf, const size_t count, const char *pattern);
-void writeAll(int fd, const void *buf, const size_t count);
+int writeAll(int fd, const void *buf, const size_t count);
 int pump(int from, int to);
 void fatal(char *message);
+void error(char *message);
+
 
 /*
  * main - Main routine for the proxy program
@@ -351,6 +353,16 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
     sprintf(logstring, "%s: %d.%d.%d.%d %s %d", time_str, a, b, c, d, uri, size);
 }
 
+/* pump
+
+DESCRIPTION
+Transfer all data available from 'from' file descriptor to 'to' file descriptor.
+
+RETURN VALUE
+On success, the number of bytes transfered is returned.
+-1 is returned when primitive library call failure occured.
+*/
+
 int pump(int from, int to)
 {
     char buf[BUFSIZE];
@@ -385,9 +397,7 @@ const size_t count
 RETURN VALUE
 On success without truncation, the number of bytes readed is returned.
 -1 is returned when truncation is occured.
-
-SIDE EFFECTS
-This function can cause termination of the entire program when read(2) system call failure occured.
+-2 is returned when read(2) failure occured.
 */
 
 int readAll(int fd, void *buf, const size_t count)
@@ -401,7 +411,8 @@ int readAll(int fd, void *buf, const size_t count)
     {
         if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
         {
-            fatal("read");
+            error("read");
+            return -2;
         }
         if (readResult == 0)
         {
@@ -432,9 +443,7 @@ const char *pattern
 RETURN VALUE
 On success without truncation, the number of bytes readed is returned.
 -1 is returned when truncation is occured.
-
-SIDE EFFECTS
-This function can cause termination of the entire program when read(2) system call failure occured.
+-2 is returned when read(2) failure occured.
 */
 
 int readUntil(int fd, void *buf, const size_t count, const char *pattern)
@@ -450,7 +459,8 @@ int readUntil(int fd, void *buf, const size_t count, const char *pattern)
     {
         if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
         {
-            fatal("read");
+            error("read");
+            return -2;
         }
         if (readResult == 0)
         {
@@ -484,11 +494,12 @@ void *buf
 const size_t count
     Size of data.
 
-SIDE EFFECTS
-This function can cause termination of the entire program when write(2) system call failure occured.
+RETURN VALUE
+On success, 0 is returned.
+-2 is returned when write(2) failure occured.
 */
 
-void writeAll(int fd, const void *buf, const size_t count)
+int writeAll(int fd, const void *buf, const size_t count)
 {
     char *cursor;
     char *endOfData;
@@ -500,10 +511,13 @@ void writeAll(int fd, const void *buf, const size_t count)
     {
         if ((writeResult = write(fd, buf, endOfData - cursor)) == -1)
         {
-            fatal("write");
+            error("write");
+            return -2;
         }
         cursor += writeResult;
     }
+
+    return 0;
 }
 
 /* fatal
@@ -516,13 +530,32 @@ char *message
     Printed error message is form of 'message: ERROR_STR'
 
 SIDE EFFECTS
+This function prints string to STDOUT.
 This function can causes termination of the entire program.
 */
 
 void fatal(char *message)
 {
+    error(message);
+    exit(EXIT_FAILURE);
+}
+
+/* error
+
+DESCRIPTION
+Print error message to stdout, based on errno.
+
+ARGUMENTS
+char *message
+    Printed error message is form of 'message: ERROR_STR'
+
+SIDE EFFECTS
+This function prints string to STDOUT.
+*/
+
+void error(char *message)
+{
     START_ERROR;
     perror(message);
     END_MESSAGE;
-    exit(EXIT_FAILURE);
 }
