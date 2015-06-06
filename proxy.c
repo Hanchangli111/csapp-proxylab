@@ -226,6 +226,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
         printf("Cannot parse client request\n");
         END_MESSAGE;
 #endif
+        free(request_host);
         return -1;
     }
 #ifdef DEBUG
@@ -233,6 +234,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     printf("host:\t%s\nport:\t%d\n", request_host, request_port);
     END_MESSAGE;
 #endif
+    free(request_host);
 
     /* DNS lookup & get serverAddr */
     if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
