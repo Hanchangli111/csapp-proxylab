@@ -34,8 +34,6 @@
 #define START_QUOTE     do {printf("\033[35m"); fflush(stdout);} while (0)
 #define END_MESSAGE     do {printf("\033[0m"); fflush(stdout);} while (0)
 
-#define DEBUG
-
 
 /* typedefs */
 typedef struct handlerJob
@@ -138,32 +136,15 @@ int main(int argc, char **argv)
         /* allocate */
         job = malloc(sizeof(handlerJob_t));
 
-#ifdef DEBUG
-        /* waiting message */
-        START_INFO;
-        printf("Listening on %s:%u\n", inet_ntoa(listenAddr.sin_addr), ntohs(listenAddr.sin_port));
-        END_MESSAGE;
-#endif
-
         /* accept */
         clientAddr_len = sizeof(struct sockaddr);
         job->clientFD = accept(listenFD, (struct sockaddr*) &(job->clientAddr), &clientAddr_len);
-#ifdef DEBUG
-        START_SUCCESS;
-        printf("Client connection from %s:%u\n", inet_ntoa(job->clientAddr.sin_addr), ntohs(job->clientAddr.sin_port));
-        END_MESSAGE;
-#endif
 
         /* handle */
         handleClientRequest(job);
 
         /* close */
         close(job->clientFD);
-#ifdef DEBUG
-        START_SUCCESS;
-        printf("Closed connection to client\n");
-        END_MESSAGE;
-#endif
     }
 
     return 0;
@@ -218,143 +199,109 @@ int handleClientRequest(handlerJob_t *job)
     char logEntry[MAXLINE];
     int responseSize;
 
-    /* read HTTP header */
-    readResult = readUntil(clientFD, clientRequestHeader, sizeof(clientRequestHeader), headerDelimiter);
-    if (readResult == -1)
+    do
     {
-        return -1;
+        /* read HTTP header */
+        readResult = readUntil(clientFD, clientRequestHeader, sizeof(clientRequestHeader), headerDelimiter);
+        if (readResult == -1)
+        {
+            break;
+        }
+        if (readResult == -2)
+        {
+            START_ERROR;
+            printf("Buffer for clientRequestHeader is full\n");
+            END_MESSAGE;
+            break;
+        }
+
+        /* analyze the request */
+        request_host = malloc(MAXLINE);
+        http = strstr(clientRequestHeader, "http://");
+
+        if (http == NULL || parse_uri(http, request_host, &request_port) == -1)
+        {
+            break;
+        }
+
+        /* DNS lookup & get serverAddr */
+        if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
+        {
+            START_ERROR;
+            printf("DNS lookup failure: %s\n", gai_strerror(getaddrinfoResult));
+            END_MESSAGE;
+            break;
+        }
+        else
+        {
+            memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
+            freeaddrinfo(serverAddrInfo);
+        }
+
+        /* prepare serverAddr */
+        serverAddr.sin_port = htons(request_port);
+
+        /* connect to end server */
+        if ((serverFD = socket(serverAddr.sin_family, SOCK_STREAM, 0)) == -1)
+        {
+            error("socket");
+            break;
+        }
+
+        if (connect(serverFD, (struct sockaddr*)(&serverAddr), sizeof(serverAddr)) == -1)
+        {
+            error("connect");
+            close(serverFD);
+            break;
+        }
+
+        /* forward request */
+        if (writeAll(serverFD, clientRequestHeader, readResult) == -1)
+        {
+            close(serverFD);
+            break;
+        }
+        if (writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter)) == -1)
+        {
+            close(serverFD);
+            break;
+        }
+
+        /* forward response */
+        responseSize = pump(serverFD, clientFD);
+        if (responseSize == -1)
+        {
+            close(serverFD);
+            break;
+        }
+
+        /* close serverFD */
+        close(serverFD);
+
+        /* make log */
+        *strstr(http, " ") = '\0';
+        format_log_entry(logEntry, clientAddr, http, responseSize);
+        if (sem_wait(&logSem) == -1)
+        {
+            fatal("sem_wait");
+        }
+        fprintf(logFile, "%s\n", logEntry);
+        fflush(logFile);
+        if (sem_post(&logSem) == -1)
+        {
+            fatal("sem_post");
+        }
+
+        /* successful termination */
+        free(job);
+
+        return responseSize;
     }
-    if (readResult == -2)
-    {
-        START_ERROR;
-        printf("Buffer for clientRequestHeader is full\n");
-        END_MESSAGE;
-        return -1;
-    }
+    while (0);
 
-#ifdef DEBUG
-    START_NOTICE;
-    printf("Client request:\n");
-    END_MESSAGE;
-    START_QUOTE;
-    writeAll(STDOUT_FILENO, clientRequestHeader, strstr(clientRequestHeader, headerDelimiter) - clientRequestHeader);
-    putchar('\n');
-    END_MESSAGE;
-#endif
-
-    /* analyze the request */
-    request_host = malloc(MAXLINE);
-    http = strstr(clientRequestHeader, "http://");
-
-    if (http == NULL || parse_uri(http, request_host, &request_port) == -1)
-    {
-#ifdef DEBUG
-        START_ERROR;
-        printf("Cannot parse client request\n");
-        END_MESSAGE;
-#endif
-        return -1;
-    }
-#ifdef DEBUG
-    START_INFO;
-    printf("host:\t%s\nport:\t%d\n", request_host, request_port);
-    END_MESSAGE;
-#endif
-
-    /* DNS lookup & get serverAddr */
-    if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
-    {
-        START_ERROR;
-        printf("DNS lookup failure: %s\n", gai_strerror(getaddrinfoResult));
-        END_MESSAGE;
-        return -1;
-    }
-    else
-    {
-        memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
-        freeaddrinfo(serverAddrInfo);
-#ifdef DEBUG
-        START_INFO;
-        printf("resolv:\t%s\n", inet_ntoa(serverAddr.sin_addr));
-        END_MESSAGE;
-#endif
-    }
-
-    /* prepare serverAddr */
-    serverAddr.sin_port = htons(request_port);
-
-    /* connect to end server */
-    if ((serverFD = socket(serverAddr.sin_family, SOCK_STREAM, 0)) == -1)
-    {
-        error("socket");
-        return -1;
-    }
-
-#ifdef DEBUG
-    START_SUCCESS;
-    printf("Connected to %s\n", inet_ntoa(serverAddr.sin_addr));
-    END_MESSAGE;
-#endif
-
-    if (connect(serverFD, (struct sockaddr*)(&serverAddr), sizeof(serverAddr)) == -1)
-    {
-        error("connect");
-        return -1;
-    }
-
-    /* forward request */
-    if (writeAll(serverFD, clientRequestHeader, readResult) == -1)
-    {
-        return -1;
-    }
-    if (writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter)) == -1)
-    {
-        return -1;
-    }
-#ifdef DEBUG
-    START_SUCCESS;
-    printf("Forwarded request to server\n");
-    END_MESSAGE;
-#endif
-
-    /* forward response */
-    responseSize = pump(serverFD, clientFD);
-    if (responseSize == -1)
-    {
-        return -1;
-    }
-#ifdef DEBUG
-    START_SUCCESS;
-    printf("Forwarded response to client\n");
-    END_MESSAGE;
-#endif
-
-    /* close serverFD */
-    close(serverFD);
-#ifdef DEBUG
-    START_SUCCESS;
-    printf("Closed connection to server\n");
-    END_MESSAGE;
-#endif
-
-    /* make log */
-    *strstr(http, " ") = '\0';
-    format_log_entry(logEntry, clientAddr, http, responseSize);
-    if (sem_wait(&logSem) == -1)
-    {
-        fatal("sem_wait");
-    }
-    fprintf(logFile, "%s\n", logEntry);
-    fflush(logFile);
-    if (sem_post(&logSem) == -1)
-    {
-        fatal("sem_post");
-    }
-
-    /* free resource */
+    /* unsuccessful termination */
     free(job);
-
-    return responseSize;
+    return -1;
 }
 
 /*
