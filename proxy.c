@@ -29,6 +29,7 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
 int readAll(int fd, void *buf, const size_t count);
 int readUntil(int fd, void *buf, const size_t count, const char *pattern);
 int writeAll(int fd, const void *buf, const size_t count);
+int pump(int from, int to);
 void fatal(char *message);
 
 /*
@@ -202,32 +203,11 @@ void handleClientRequest(int clientFD)
     printf("Forwarded request to server\n");
     END_MESSAGE;
 
-    /* get response */
-    if ((readResult = readAll(serverFD, buf, sizeof(buf))) == -1)
-    {
-        START_ERROR;
-        printf("Buffer full\n");
-        END_MESSAGE;
-    }
-    else
-    {
-        START_NOTICE;
-        printf("Server response:\n");
-        END_MESSAGE;
-        START_QUOTE;
-        writeAll(STDOUT_FILENO, buf, strstr(buf, headerDelimiter) - buf);
-        END_MESSAGE;
-        putchar('\n');
-        START_NOTICE;
-        printf("HTTP body in server response is omitted.\n");
-        END_MESSAGE;
-
-        /* forward response */
-        writeAll(clientFD, buf, readResult);
-        START_SUCCESS;
-        printf("Forwarded response to client\n");
-        END_MESSAGE;
-    }
+    /* forward response */
+    pump(serverFD, clientFD);
+    START_SUCCESS;
+    printf("Forwarded response to client\n");
+    END_MESSAGE;
 
     close(serverFD);
     START_SUCCESS;
@@ -321,13 +301,29 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
     sprintf(logstring, "%s: %d.%d.%d.%d %s", time_str, a, b, c, d, uri);
 }
 
+int pump(int from, int to)
+{
+    char buf[BUFSIZE];
+    int readResult;
+    int total;
+
+    total = 0;
+    while ((readResult = readAll(from, buf, sizeof(buf))) == -1)
+    {
+        writeAll(to, buf, sizeof(buf));
+        total += readResult;
+    }
+    writeAll(to, buf, readResult);
+    total += readResult;
+    return total;
+}
+
 int readAll(int fd, void *buf, const size_t count)
 {
     void *cursor;
-    void *endOfBuffer;
     int readResult;
+    void * const endOfBuffer = buf + count;
     cursor = buf;
-    endOfBuffer = buf + count;
 
     while (cursor < endOfBuffer)
     {
