@@ -47,7 +47,7 @@ handlerJob_t;
 /*
  * Function prototypes
  */
-int handleClientRequest(handlerJob_t *job);
+void *handleClientRequest(void *job);
 int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
@@ -132,6 +132,8 @@ int main(int argc, char **argv)
     {
         handlerJob_t *job;
         socklen_t clientAddr_len;
+        pthread_t dummy;
+        pthread_attr_t threadAttr;
 
         /* allocate */
         job = malloc(sizeof(handlerJob_t));
@@ -140,11 +142,12 @@ int main(int argc, char **argv)
         clientAddr_len = sizeof(struct sockaddr);
         job->clientFD = accept(listenFD, (struct sockaddr*) &(job->clientAddr), &clientAddr_len);
 
-        /* handle */
-        handleClientRequest(job);
+        /* thread attribute - detached */
+        pthread_attr_init(&threadAttr);
+        pthread_attr_setdetachstate(&threadAttr, PTHREAD_CREATE_DETACHED);
 
-        /* close */
-        close(job->clientFD);
+        /* create thread */
+        pthread_create(&dummy, &threadAttr, handleClientRequest, job);
     }
 
     return 0;
@@ -164,9 +167,6 @@ handlerJob_t *job
     struct sockaddr_in *clientAddr
         sockaddr descriptor from accept(2) system call
 
-RETURN VALUE
-On failure, -1 is returned. On success, the object size of server response is returned.
-
 LIMITATIONS
 This function will fail if HTTP header is biggern than BUFSIZE.
 
@@ -176,11 +176,11 @@ This function logs real-time status to STDOUT, and writes a log entry for each r
 This function calls subroutines with side effects, such as readAll, readUntil and writeAll.
 */
 
-int handleClientRequest(handlerJob_t *job)
+void *handleClientRequest(void *job)
 {
     /* argument */
-    int clientFD = job->clientFD;
-    struct sockaddr_in* clientAddr = &(job->clientAddr);
+    int clientFD = ((handlerJob_t*)job)->clientFD;
+    struct sockaddr_in* clientAddr = &(((handlerJob_t*)job)->clientAddr);
 
     /* for saving and parsing HTTP request from client */
     const char *headerDelimiter = "\r\n\r\n";
@@ -291,17 +291,13 @@ int handleClientRequest(handlerJob_t *job)
         {
             fatal("sem_post");
         }
-
-        /* successful termination */
-        free(job);
-
-        return responseSize;
     }
     while (0);
 
-    /* unsuccessful termination */
+    /* finally */
     free(job);
-    return -1;
+    close(clientFD);
+    return NULL;
 }
 
 /*
