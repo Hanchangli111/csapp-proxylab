@@ -24,7 +24,7 @@
  * Function prototypes
  */
 void handleClientRequest(int clientFD);
-int parse_uri(char *uri, char *target_addr, char *path, in_port_t *port);
+int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
 int readUntil(int fd, void *buf, const size_t count, const char *pattern);
@@ -118,7 +118,7 @@ void handleClientRequest(int clientFD)
     const char *headerDelimiter = "\r\n\r\n";
     char buf[BUFSIZE];
     int readResult;
-    char *http, *request_host, *request_path;
+    char *http, *request_host;
     in_port_t request_port;
     struct addrinfo *serverAddrInfo;
     int getaddrinfoResult;
@@ -144,10 +144,9 @@ void handleClientRequest(int clientFD)
 
     /* analyze the request */
     request_host = malloc(MAXLINE);
-    request_path = malloc(MAXLINE);
     http = strstr(buf, "http://");
 
-    if (http == NULL || parse_uri(http, request_host, request_path, &request_port) == -1)
+    if (http == NULL || parse_uri(http, request_host, &request_port) == -1)
     {
         START_ERROR;
         printf("Cannot parse client request\n");
@@ -155,7 +154,7 @@ void handleClientRequest(int clientFD)
         return;
     }
     START_INFO;
-    printf("host:\t%s\npath:\t%s\nport:\t%d\n", request_host, request_path, request_port);
+    printf("host:\t%s\nport:\t%d\n", request_host, request_port);
     END_MESSAGE;
 
     /* dns lookup */
@@ -219,16 +218,14 @@ void handleClientRequest(int clientFD)
  * parse_uri - URI parser
  *
  * Given a URI from an HTTP proxy GET request (i.e., a URL), extract
- * the host name, path name, and port.  The memory for hostname and
- * pathname must already be allocated and should be at least MAXLINE
+ * the host name,  and port.  The memory for hostname
+ * must already be allocated and should be at least MAXLINE
  * bytes. Return -1 if there are any problems.
  */
-int parse_uri(char *uri, char *hostname, char *pathname, in_port_t *port)
+int parse_uri(char *uri, char *hostname, in_port_t *port)
 {
     char *hostbegin;
     char *hostend;
-    char *pathbegin;
-    char *pathend;
     int len;
 
     if (strncasecmp(uri, "http://", 7) != 0)
@@ -249,19 +246,6 @@ int parse_uri(char *uri, char *hostname, char *pathname, in_port_t *port)
     if (*hostend == ':')
     {
         *port = atoi(hostend + 1);
-    }
-
-    /* Extract the path */
-    pathbegin = strchr(hostbegin, '/');
-    if (pathbegin == NULL)
-    {
-        pathname[0] = '\0';
-    }
-    else
-    {
-        pathbegin++;
-        pathend = strpbrk(pathbegin, " \r\n\0");
-        strncpy(pathname, pathbegin, pathend - pathbegin);
     }
 
     return 0;
