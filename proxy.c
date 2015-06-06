@@ -183,7 +183,12 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     int responseSize;
 
     /* read HTTP header */
-    if ((readResult = readUntil(clientFD, clientRequestHeader, sizeof(clientRequestHeader), headerDelimiter)) == -1)
+    readResult = readUntil(clientFD, clientRequestHeader, sizeof(clientRequestHeader), headerDelimiter);
+    if (readResult == -1)
+    {
+        return -1;
+    }
+    if (readResult == -2)
     {
         START_ERROR;
         printf("Buffer full\n");
@@ -237,7 +242,8 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     /* connect to end server */
     if ((serverFD = socket(serverAddr.sin_family, SOCK_STREAM, 0)) == -1)
     {
-        fatal("socket");
+        error("socket");
+        return -1;
     }
 
     START_SUCCESS;
@@ -246,21 +252,29 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
 
     if (connect(serverFD, (struct sockaddr*)(&serverAddr), sizeof(serverAddr)) == -1)
     {
-        START_ERROR;
-        perror("connect");
-        END_MESSAGE;
+        error("connect");
         return -1;
     }
 
     /* forward request */
-    writeAll(serverFD, clientRequestHeader, readResult);
-    writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter));
+    if (writeAll(serverFD, clientRequestHeader, readResult) == -1)
+    {
+        return -1;
+    }
+    if (writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter)) == -1)
+    {
+        return -1;
+    }
     START_SUCCESS;
     printf("Forwarded request to server\n");
     END_MESSAGE;
 
     /* forward response */
     responseSize = pump(serverFD, clientFD);
+    if (responseSize == -1)
+    {
+        return -1;
+    }
     START_SUCCESS;
     printf("Forwarded response to client\n");
     END_MESSAGE;
@@ -370,12 +384,22 @@ int pump(int from, int to)
     int total;
 
     total = 0;
-    while ((readResult = readAll(from, buf, sizeof(buf))) == -1)
+    while ((readResult = readAll(from, buf, sizeof(buf))) == -2)
     {
-        writeAll(to, buf, sizeof(buf));
+        if (writeAll(to, buf, sizeof(buf)) == -1)
+        {
+            return -1;
+        }
         total += readResult;
     }
-    writeAll(to, buf, readResult);
+    if (readResult == -1)
+    {
+        return -1;
+    }
+    if (writeAll(to, buf, readResult) == -1)
+    {
+        return -1;
+    }
     total += readResult;
     return total;
 }
@@ -385,6 +409,7 @@ int pump(int from, int to)
 DESCRIPTION
 Tries to read all the data currently available from file descriptor fd,
 but truncates data to fit in size of count.
+Remaining data can be readed by calling read(2) or readAll again.
 
 ARGUMENTS
 int fd
@@ -396,32 +421,33 @@ const size_t count
 
 RETURN VALUE
 On success without truncation, the number of bytes readed is returned.
--1 is returned when truncation is occured.
--2 is returned when read(2) failure occured.
+-1 is returned when read(2) failure occured.
+-2 is returned when truncation is occured.
 */
 
 int readAll(int fd, void *buf, const size_t count)
 {
-    void *cursor;
+    char *cursor;
     int readResult;
-    void * const endOfBuffer = buf + count;
+    char * const endOfBuffer = buf + count;
     cursor = buf;
 
+    *cursor = '\0';
     while (cursor < endOfBuffer)
     {
         if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
         {
             error("read");
-            return -2;
+            return -1;
         }
         if (readResult == 0)
         {
-            return (cursor - buf);
+            return (cursor - (char*)buf);
         }
         cursor += readResult;
     }
 
-    return -1;
+    return -2;
 }
 
 /* readUntil
@@ -442,8 +468,8 @@ const char *pattern
 
 RETURN VALUE
 On success without truncation, the number of bytes readed is returned.
--1 is returned when truncation is occured.
--2 is returned when read(2) failure occured.
+-1 is returned when read(2) failure occured.
+-2 is returned when truncation is occured.
 */
 
 int readUntil(int fd, void *buf, const size_t count, const char *pattern)
@@ -455,12 +481,13 @@ int readUntil(int fd, void *buf, const size_t count, const char *pattern)
     cursor = buf;
     endOfBuffer = buf + count;
 
+    *cursor = '\0';
     while (cursor < endOfBuffer)
     {
         if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
         {
             error("read");
-            return -2;
+            return -1;
         }
         if (readResult == 0)
         {
@@ -469,7 +496,7 @@ int readUntil(int fd, void *buf, const size_t count, const char *pattern)
         cursor += readResult;
         if (cursor >= endOfBuffer)
         {
-            return -1;
+            return -2;
         }
         *cursor = '\0';
         if ((substr = strstr(buf, pattern)) != NULL)
@@ -478,7 +505,7 @@ int readUntil(int fd, void *buf, const size_t count, const char *pattern)
         }
     }
 
-    return -1;
+    return -2;
 }
 
 /* writeAll
@@ -496,7 +523,7 @@ const size_t count
 
 RETURN VALUE
 On success, 0 is returned.
--2 is returned when write(2) failure occured.
+-1 is returned when write(2) failure occured.
 */
 
 int writeAll(int fd, const void *buf, const size_t count)
@@ -512,7 +539,7 @@ int writeAll(int fd, const void *buf, const size_t count)
         if ((writeResult = write(fd, buf, endOfData - cursor)) == -1)
         {
             error("write");
-            return -2;
+            return -1;
         }
         cursor += writeResult;
     }
