@@ -12,6 +12,7 @@
 #include "csapp.h"
 
 #define BUFSIZE         1024*1024
+#define LOGFILENAME     ("proxy.log")
 
 #define START_INFO      {printf("\033[36m"); fflush(stdout);}
 #define START_SUCCESS   {printf("\033[32m"); fflush(stdout);}
@@ -23,7 +24,7 @@
 /*
  * Function prototypes
  */
-void handleClientRequest(int clientFD);
+int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log);
 int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
@@ -41,6 +42,7 @@ int main(int argc, char **argv)
     int listenFD;
     struct sockaddr_in listenAddr;
     int optval;
+    FILE *log;
 
     /* Check arguments */
     if (argc != 2)
@@ -49,6 +51,12 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     listenPort = atoi(argv[1]);
+
+    /* log file */
+    if ((log = fopen(LOGFILENAME, "a")) == NULL)
+    {
+        fatal("fopen");
+    }
 
     /* initalize listen socket */
     if ((listenFD = socket(AF_INET, SOCK_STREAM, 0)) == -1)
@@ -101,7 +109,7 @@ int main(int argc, char **argv)
         END_MESSAGE;
 
         /* handle */
-        handleClientRequest(clientFD);
+        handleClientRequest(clientFD, &clientAddr, log);
 
         /* close */
         close(clientFD);
@@ -113,7 +121,7 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void handleClientRequest(int clientFD)
+int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
 {
     const char *headerDelimiter = "\r\n\r\n";
     char buf[BUFSIZE];
@@ -124,6 +132,8 @@ void handleClientRequest(int clientFD)
     int getaddrinfoResult;
     struct sockaddr_in serverAddr;
     int serverFD;
+    int responseSize;
+    char logRow[MAXLINE];
 
     /* read HTTP header */
     if ((readResult = readUntil(clientFD, buf, sizeof(buf), headerDelimiter)) == -1)
@@ -131,7 +141,7 @@ void handleClientRequest(int clientFD)
         START_ERROR;
         printf("Buffer full\n");
         END_MESSAGE;
-        return;
+        return -1;
     }
 
     START_NOTICE;
@@ -151,7 +161,7 @@ void handleClientRequest(int clientFD)
         START_ERROR;
         printf("Cannot parse client request\n");
         END_MESSAGE;
-        return;
+        return -1;
     }
     START_INFO;
     printf("host:\t%s\nport:\t%d\n", request_host, request_port);
@@ -163,7 +173,7 @@ void handleClientRequest(int clientFD)
         START_ERROR;
         printf("DNS lookup failure: %s\n", gai_strerror(getaddrinfoResult));
         END_MESSAGE;
-        return;
+        return -1;
     }
     else
     {
@@ -192,7 +202,7 @@ void handleClientRequest(int clientFD)
         START_ERROR;
         perror("connect");
         END_MESSAGE;
-        return;
+        return -1;
     }
 
     /* forward request */
@@ -203,15 +213,24 @@ void handleClientRequest(int clientFD)
     END_MESSAGE;
 
     /* forward response */
-    pump(serverFD, clientFD);
+    responseSize = pump(serverFD, clientFD);
     START_SUCCESS;
     printf("Forwarded response to client\n");
     END_MESSAGE;
 
+    /* close serverFD */
     close(serverFD);
     START_SUCCESS;
     printf("Closed connection to server\n");
     END_MESSAGE;
+
+    /* make log */
+    *strstr(http, " ") = '\0';
+    format_log_entry(logRow, clientAddr, http, responseSize);
+    fprintf(log, "%s\n", logRow);
+    fflush(log);
+
+    return responseSize;
 }
 
 /*
@@ -282,7 +301,7 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
     d = host & 0xff;
 
     /* Return the formatted log entry string */
-    sprintf(logstring, "%s: %d.%d.%d.%d %s", time_str, a, b, c, d, uri);
+    sprintf(logstring, "%s: %d.%d.%d.%d %s %d", time_str, a, b, c, d, uri, size);
 }
 
 int pump(int from, int to)
