@@ -15,7 +15,7 @@
 
 #define START_INFO      {printf("\033[36m"); fflush(stdout);}
 #define START_SUCCESS   {printf("\033[32m"); fflush(stdout);}
-#define START_WARNING   {printf("\033[33m"); fflush(stdout);}
+#define START_NOTICE    {printf("\033[33m"); fflush(stdout);}
 #define START_ERROR     {printf("\033[31m"); fflush(stdout);}
 #define START_QUOTE     {printf("\033[35m"); fflush(stdout);}
 #define END_MESSAGE     {printf("\033[0m"); fflush(stdout);}
@@ -23,12 +23,12 @@
 /*
  * Function prototypes
  */
-void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len);
+void handleClientRequest(int clientFD);
 int parse_uri(char *uri, char *target_addr, char *path, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
-int readAll(int fd, void *buf, size_t count);
-int readUntil(int fd, void *buf, size_t count, const char *pattern);
-int writeAll(int fd, const void *buf, size_t count);
+int readAll(int fd, void *buf, const size_t count);
+int readUntil(int fd, void *buf, const size_t count, const char *pattern);
+int writeAll(int fd, const void *buf, const size_t count);
 void fatal(char *message);
 
 /*
@@ -80,9 +80,6 @@ int main(int argc, char **argv)
     {
         fatal("listen");
     }
-    START_INFO;
-    printf("Listening on %s:%u\n", inet_ntoa(listenAddr.sin_addr), ntohs(listenAddr.sin_port));
-    END_MESSAGE;
 
     for(;;)
     {
@@ -90,15 +87,20 @@ int main(int argc, char **argv)
         struct sockaddr_in clientAddr;
         socklen_t clientAddr_len;
 
+        /* waiting message */
+        START_INFO;
+        printf("Listening on %s:%u\n", inet_ntoa(listenAddr.sin_addr), ntohs(listenAddr.sin_port));
+        END_MESSAGE;
+
         /* accept */
         clientAddr_len = sizeof(clientAddr);
         clientFD = accept(listenFD, (struct sockaddr*) &clientAddr, &clientAddr_len);
         START_SUCCESS;
-        printf("Connection from %s:%u\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
+        printf("Client connection from %s:%u\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
         END_MESSAGE;
 
         /* handle */
-        handleClientRequest(clientFD, &clientAddr, clientAddr_len);
+        handleClientRequest(clientFD);
 
         /* close */
         close(clientFD);
@@ -110,7 +112,7 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len)
+void handleClientRequest(int clientFD)
 {
     const char *headerDelimiter = "\r\n\r\n";
     char buf[BUFSIZE];
@@ -131,6 +133,9 @@ void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t
         return;
     }
 
+    START_NOTICE;
+    printf("Client request:\n");
+    END_MESSAGE;
     START_QUOTE;
     writeAll(STDOUT_FILENO, buf, readResult);
     putchar('\n');
@@ -144,7 +149,7 @@ void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t
     if (http == NULL || parse_uri(http, request_host, request_path, &request_port) == -1)
     {
         START_ERROR;
-        printf("Parse error\n");
+        printf("Cannot parse client request\n");
         END_MESSAGE;
         return;
     }
@@ -193,6 +198,9 @@ void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t
     /* forward request */
     writeAll(serverFD, buf, readResult);
     writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter));
+    START_SUCCESS;
+    printf("Forwarded request to server\n");
+    END_MESSAGE;
 
     /* get response */
     if ((readResult = readAll(serverFD, buf, sizeof(buf))) == -1)
@@ -203,12 +211,22 @@ void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t
     }
     else
     {
+        START_NOTICE;
+        printf("Server response:\n");
+        END_MESSAGE;
         START_QUOTE;
-        writeAll(STDOUT_FILENO, buf, readResult);
+        writeAll(STDOUT_FILENO, buf, strstr(buf, headerDelimiter) - buf);
+        END_MESSAGE;
+        putchar('\n');
+        START_NOTICE;
+        printf("HTTP body in server response is omitted.\n");
         END_MESSAGE;
 
         /* forward response */
         writeAll(clientFD, buf, readResult);
+        START_SUCCESS;
+        printf("Forwarded response to client\n");
+        END_MESSAGE;
     }
 
     close(serverFD);
@@ -303,7 +321,7 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
     sprintf(logstring, "%s: %d.%d.%d.%d %s", time_str, a, b, c, d, uri);
 }
 
-int readAll(int fd, void *buf, size_t count)
+int readAll(int fd, void *buf, const size_t count)
 {
     void *cursor;
     void *endOfBuffer;
@@ -327,7 +345,7 @@ int readAll(int fd, void *buf, size_t count)
     return -1;
 }
 
-int readUntil(int fd, void *buf, size_t count, const char *pattern)
+int readUntil(int fd, void *buf, const size_t count, const char *pattern)
 {
     char *cursor;
     char *endOfBuffer;
@@ -354,7 +372,6 @@ int readUntil(int fd, void *buf, size_t count, const char *pattern)
         *cursor = '\0';
         if ((substr = strstr(buf, pattern)) != NULL)
         {
-            *substr = '\0';                 /* TODO remove */
             return (substr - (char*)buf);
         }
     }
@@ -362,7 +379,7 @@ int readUntil(int fd, void *buf, size_t count, const char *pattern)
     return -1;
 }
 
-int writeAll(int fd, const void *buf, size_t count)
+int writeAll(int fd, const void *buf, const size_t count)
 {
     char *cursor;
     char *endOfData;
