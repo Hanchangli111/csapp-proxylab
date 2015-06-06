@@ -22,15 +22,65 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
  */
 int main(int argc, char **argv)
 {
+    uint16_t listenPort;
+    int listenFD, connFD;
+    struct sockaddr_in listenAddr;
+    struct sockaddr_in clientAddr;
+    socklen_t clientAddr_len;
+    int optval;
 
     /* Check arguments */
     if (argc != 2)
     {
         fprintf(stderr, "Usage: %s <port number>\n", argv[0]);
-        exit(0);
+        exit(EXIT_FAILURE);
+    }
+    listenPort = atoi(argv[1]);
+
+    /* initalize listen socket */
+    if ((listenFD = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+    {
+        perror("socket");
+        exit(EXIT_FAILURE);
     }
 
-    exit(0);
+    /* option for listen socket */
+    optval = 1;
+    if (setsockopt(listenFD, SOL_SOCKET, SO_REUSEADDR,
+                (const void*) &optval, sizeof(optval)) == -1)
+    {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+
+    /* prepare address */
+    memset(&listenAddr, 0, sizeof(listenAddr));
+    listenAddr.sin_family = AF_INET;
+    listenAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    listenAddr.sin_port = htons(listenPort);
+
+    /* bind */
+    if (bind(listenFD, (const struct sockaddr*) &listenAddr, sizeof(listenAddr)) == -1)
+    {
+        perror("bind");
+        exit(EXIT_FAILURE);
+    }
+
+    /* listen */
+    if (listen(listenFD, LISTENQ) == -1)
+    {
+        perror("listen");
+        exit(EXIT_FAILURE);
+    }
+
+    /* accept */
+    for(;;)
+    {
+        connFD = accept(listenFD, (struct sockaddr*) &clientAddr, &clientAddr_len);
+        close(connFD);
+    }
+
+    return 0;
 }
 
 /*
