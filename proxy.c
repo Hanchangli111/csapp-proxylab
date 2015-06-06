@@ -592,6 +592,6 @@ This function prints string to STDOUT.
 void error(char *message)
 {
     START_ERROR;
-    fprintf(stdout, "%s: failure\n", message);
+    perror(message);
     END_MESSAGE;
 }
