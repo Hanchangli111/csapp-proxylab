@@ -34,10 +34,13 @@
 #define START_QUOTE     do {printf("\033[35m"); fflush(stdout);} while (0)
 #define END_MESSAGE     do {printf("\033[0m"); fflush(stdout);} while (0)
 
+#define DEBUG
+
+
 /*
  * Function prototypes
  */
-int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log);
+int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr);
 int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
@@ -46,6 +49,11 @@ int writeAll(int fd, const void *buf, const size_t count);
 int pump(int from, int to);
 void fatal(char *message);
 void error(char *message);
+
+
+/* global variables */
+FILE *logFile;
+sem_t logSem;
 
 
 /*
@@ -57,7 +65,6 @@ int main(int argc, char **argv)
     int listenFD;
     struct sockaddr_in listenAddr;
     int optval;
-    FILE *log;
 
     /* Check arguments */
     if (argc != 2)
@@ -71,9 +78,15 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
 
     /* open the log file */
-    if ((log = fopen(LOGFILENAME, "a")) == NULL)
+    if ((logFile = fopen(LOGFILENAME, "a")) == NULL)
     {
         fatal("fopen");
+    }
+
+    /* semaphore */
+    if (sem_init(&logSem, 0, 1)  == -1)
+    {
+        fatal("sem_init");
     }
 
     /* initalize listen socket */
@@ -131,7 +144,7 @@ int main(int argc, char **argv)
 #endif
 
         /* handle */
-        handleClientRequest(clientFD, &clientAddr, log);
+        handleClientRequest(clientFD, &clientAddr);
 
         /* close */
         close(clientFD);
@@ -157,8 +170,6 @@ int clientFD
     connection file descriptor from accept(2) system call
 struct sockaddr_in *clientAddr
     sockaddr descriptor from accept(2) system call
-FILE *log
-    file pointer to log file
 
 RETURN VALUE
 On failure, -1 is returned. On success, the object size of server response is returned.
@@ -172,7 +183,7 @@ This function logs real-time status to STDOUT, and writes a log entry for each r
 This function calls subroutines with side effects, such as readAll, readUntil and writeAll.
 */
 
-int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
+int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr)
 {
     /* for saving and parsing HTTP request from client */
     const char *headerDelimiter = "\r\n\r\n";
@@ -313,8 +324,16 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     /* make log */
     *strstr(http, " ") = '\0';
     format_log_entry(logEntry, clientAddr, http, responseSize);
-    fprintf(log, "%s\n", logEntry);
-    fflush(log);
+    if (sem_wait(&logSem) == -1)
+    {
+        fatal("sem_wait");
+    }
+    fprintf(logFile, "%s\n", logEntry);
+    fflush(logFile);
+    if (sem_post(&logSem) == -1)
+    {
+        fatal("sem_post");
+    }
 
     return responseSize;
 }
