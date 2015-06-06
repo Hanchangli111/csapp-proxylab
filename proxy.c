@@ -11,7 +11,7 @@
 
 #include "csapp.h"
 
-#define BUFSIZE         1024
+#define BUFSIZE         1024*1024
 
 #define START_INFO      {printf("\033[36m"); fflush(stdout);}
 #define START_SUCCESS   {printf("\033[32m"); fflush(stdout);}
@@ -191,7 +191,7 @@ void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t
     }
 
     /* forward request */
-    writeAll(serverFD, buf, sizeof(buf));
+    writeAll(serverFD, buf, readResult);
     writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter));
 
     /* get response */
