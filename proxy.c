@@ -4,16 +4,29 @@
  * Student Information:
  *     JangHo Seo<jangho.se@snu.ac.kr>, 2014-18790
  *
- * IMPORTANT: Give a high level description of your code here. You
- * must also provide a header comment at the beginning of each
- * function that describes what that function does.
+ * How this proxy works:
+ *  - function main
+ *      - parse port number from CLI input
+ *      - listen from INADDR_ANY:portnumber
+ *      - for each accepted connection (i.e. browser connection), call handleClientRequest
+ *      - close connection socket and listen again
+ *  - function handleClientRequest
+ *      - read browser request until blank line encountered, for reading HTTP header
+ *      - from request header extract end server host and port number
+ *      - translate server host to ip address by calling getaddrinfo(3)
+ *      - connect to end server and forward the HTTP header which was previously saved
+ *      - pump server response to browser by repeatedly calling read(2) and write(2)
+ *      - close the server socket
+ *      - generate a log entry
  */
 
 #include "csapp.h"
 
+/* basic configuration */
 #define BUFSIZE         (1024*1024)
 #define LOGFILENAME     ("proxy.log")
 
+/* for pretty terminal output */
 #define START_INFO      do {printf("\033[36m"); fflush(stdout);} while (0)
 #define START_SUCCESS   do {printf("\033[32m"); fflush(stdout);} while (0)
 #define START_NOTICE    do {printf("\033[33m"); fflush(stdout);} while (0)
@@ -29,7 +42,7 @@ int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
 int readUntil(int fd, void *buf, const size_t count, const char *pattern);
-int writeAll(int fd, const void *buf, const size_t count);
+void writeAll(int fd, const void *buf, const size_t count);
 int pump(int from, int to);
 void fatal(char *message);
 
@@ -52,7 +65,7 @@ int main(int argc, char **argv)
     }
     listenPort = atoi(argv[1]);
 
-    /* log file */
+    /* open the log file */
     if ((log = fopen(LOGFILENAME, "a")) == NULL)
     {
         fatal("fopen");
@@ -121,22 +134,54 @@ int main(int argc, char **argv)
     return 0;
 }
 
+/* handleClientRequest
+
+DESCRIPTION
+Assumes HTTP header stream from clientFD and acts like a middleman between client and end-server.
+It parses end-server information from clientFD stream and connect accordingly, and forward the response to the client.
+For this function, socket to client and file pointer to log file should be available.
+
+ARGUMENTS
+int clientFD
+    connection file descriptor from accept(2) system call
+struct sockaddr_in *clientAddr
+    sockaddr descriptor from accept(2) system call
+FILE *log
+    file pointer to log file
+
+RETURN VALUE
+On failure, -1 is returned. On success, the object size of server response is returned.
+
+LIMITATIONS
+This function will fail if HTTP header is biggern than BUFSIZE.
+
+SIDE EFFECTS
+This function can cause termination of the entire program in some cases of system call failure.
+This function logs real-time status to STDOUT, and writes a log entry for each request to LOGFILENAME.
+This function calls subroutines with side effects, such as readAll, readUntil and writeAll.
+*/
+
 int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
 {
+    /* for saving and parsing HTTP request from client */
     const char *headerDelimiter = "\r\n\r\n";
-    char buf[BUFSIZE];
-    int readResult;
+    char clientRequestHeader[BUFSIZE];
     char *http, *request_host;
     in_port_t request_port;
+
+    /* server connection information */
     struct addrinfo *serverAddrInfo;
-    int getaddrinfoResult;
     struct sockaddr_in serverAddr;
     int serverFD;
-    int responseSize;
+
+    /* misc. */
+    int readResult;
+    int getaddrinfoResult;
     char logEntry[MAXLINE];
+    int responseSize;
 
     /* read HTTP header */
-    if ((readResult = readUntil(clientFD, buf, sizeof(buf), headerDelimiter)) == -1)
+    if ((readResult = readUntil(clientFD, clientRequestHeader, sizeof(clientRequestHeader), headerDelimiter)) == -1)
     {
         START_ERROR;
         printf("Buffer full\n");
@@ -148,13 +193,13 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     printf("Client request:\n");
     END_MESSAGE;
     START_QUOTE;
-    writeAll(STDOUT_FILENO, buf, strstr(buf, headerDelimiter) - buf);
+    writeAll(STDOUT_FILENO, clientRequestHeader, strstr(clientRequestHeader, headerDelimiter) - clientRequestHeader);
     putchar('\n');
     END_MESSAGE;
 
     /* analyze the request */
     request_host = malloc(MAXLINE);
-    http = strstr(buf, "http://");
+    http = strstr(clientRequestHeader, "http://");
 
     if (http == NULL || parse_uri(http, request_host, &request_port) == -1)
     {
@@ -167,7 +212,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     printf("host:\t%s\nport:\t%d\n", request_host, request_port);
     END_MESSAGE;
 
-    /* dns lookup */
+    /* DNS lookup & get serverAddr */
     if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
     {
         START_ERROR;
@@ -206,7 +251,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     }
 
     /* forward request */
-    writeAll(serverFD, buf, readResult);
+    writeAll(serverFD, clientRequestHeader, readResult);
     writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter));
     START_SUCCESS;
     printf("Forwarded request to server\n");
@@ -241,6 +286,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
  * must already be allocated and should be at least MAXLINE
  * bytes. Return -1 if there are any problems.
  */
+
 int parse_uri(char *uri, char *hostname, in_port_t *port)
 {
     char *hostbegin;
@@ -277,6 +323,7 @@ int parse_uri(char *uri, char *hostname, in_port_t *port)
  * (sockaddr), the URI from the request (uri), and the size in bytes
  * of the response from the server (size).
  */
+
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size)
 {
     time_t now;
@@ -321,6 +368,28 @@ int pump(int from, int to)
     return total;
 }
 
+/* readAll
+
+DESCRIPTION
+Tries to read all the data currently available from file descriptor fd,
+but truncates data to fit in size of count.
+
+ARGUMENTS
+int fd
+    File descriptor from which target data is available.
+void *buf
+    Buffer to save data
+const size_t count
+    Maximum size of data, possible the size of buffer.
+
+RETURN VALUE
+On success without truncation, the number of bytes readed is returned.
+-1 is returned when truncation is occured.
+
+SIDE EFFECTS
+This function can cause termination of the entire program when read(2) system call failure occured.
+*/
+
 int readAll(int fd, void *buf, const size_t count)
 {
     void *cursor;
@@ -343,6 +412,30 @@ int readAll(int fd, void *buf, const size_t count)
 
     return -1;
 }
+
+/* readUntil
+
+DESCRIPTION
+Tries to read the data currently available from file descriptor fd,
+stops when pattern is found in data.
+
+ARGUMENTS
+int fd
+    File descriptor from which target data is available.
+void *buf
+    Buffer to save data
+const size_t count
+    Maximum size of data, possible the size of buffer.
+const char *pattern
+    Character pattern to determine stop condition of reading.
+
+RETURN VALUE
+On success without truncation, the number of bytes readed is returned.
+-1 is returned when truncation is occured.
+
+SIDE EFFECTS
+This function can cause termination of the entire program when read(2) system call failure occured.
+*/
 
 int readUntil(int fd, void *buf, const size_t count, const char *pattern)
 {
@@ -378,7 +471,24 @@ int readUntil(int fd, void *buf, const size_t count, const char *pattern)
     return -1;
 }
 
-int writeAll(int fd, const void *buf, const size_t count)
+/* writeAll
+
+DESCRIPTION
+Tries to write all the data currently available to file descriptor fd.
+
+ARGUMENTS
+int fd
+    This function writes to fd.
+void *buf
+    Character buffer from which target data is available.
+const size_t count
+    Size of data.
+
+SIDE EFFECTS
+This function can cause termination of the entire program when write(2) system call failure occured.
+*/
+
+void writeAll(int fd, const void *buf, const size_t count)
 {
     char *cursor;
     char *endOfData;
@@ -394,9 +504,20 @@ int writeAll(int fd, const void *buf, const size_t count)
         }
         cursor += writeResult;
     }
-
-    return count;
 }
+
+/* fatal
+
+DESCRIPTION
+Print error message to stdout and terminate the program, based on errno.
+
+ARGUMENTS
+char *message
+    Printed error message is form of 'message: ERROR_STR'
+
+SIDE EFFECTS
+This function can causes termination of the entire program.
+*/
 
 void fatal(char *message)
 {
