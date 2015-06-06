@@ -11,11 +11,22 @@
 
 #include "csapp.h"
 
+#define BUFSIZE         1024
+
+#define START_INFO      {printf("\033[36m"); fflush(stdout);}
+#define START_SUCCESS   {printf("\033[32m"); fflush(stdout);}
+#define START_WARNING   {printf("\033[33m"); fflush(stdout);}
+#define START_ERROR     {printf("\033[31m"); fflush(stdout);}
+#define START_QUOTE     {printf("\033[35m"); fflush(stdout);}
+#define END_MESSAGE     {printf("\033[0m"); fflush(stdout);}
+
 /*
  * Function prototypes
  */
 int parse_uri(char *uri, char *target_addr, char *path, int  *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
+int readAll(int fd, void *buf, size_t count);
+int writeAll(int fd, void *buf, size_t count);
 
 /*
  * main - Main routine for the proxy program
@@ -23,10 +34,8 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
 int main(int argc, char **argv)
 {
     uint16_t listenPort;
-    int listenFD, connFD;
+    int listenFD;
     struct sockaddr_in listenAddr;
-    struct sockaddr_in clientAddr;
-    socklen_t clientAddr_len;
     int optval;
 
     /* Check arguments */
@@ -72,12 +81,43 @@ int main(int argc, char **argv)
         perror("listen");
         exit(EXIT_FAILURE);
     }
+    START_INFO;
+    printf("Listening on %s:%u\n", inet_ntoa(listenAddr.sin_addr), ntohs(listenAddr.sin_port));
+    END_MESSAGE;
 
-    /* accept */
     for(;;)
     {
+        int connFD;
+        struct sockaddr_in clientAddr;
+        socklen_t clientAddr_len;
+        char buf[BUFSIZE];
+        int readResult;
+
+        /* accept */
+        clientAddr_len = sizeof(clientAddr);
         connFD = accept(listenFD, (struct sockaddr*) &clientAddr, &clientAddr_len);
+        START_SUCCESS;
+        printf("Connection from %s:%u\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
+        END_MESSAGE;
+
+        /* read until eof */
+        if ((readResult = readAll(connFD, buf, sizeof(buf))) == -1)
+        {
+            START_ERROR;
+            printf("Buffer full\n");
+            END_MESSAGE;
+        }
+
+        /* forward to stdout */
+        START_QUOTE;
+        writeAll(STDOUT_FILENO, buf, readResult);
+        END_MESSAGE;
+
+        /* close */
         close(connFD);
+        START_SUCCESS;
+        printf("Connection closed\n");
+        END_MESSAGE;
     }
 
     return 0;
@@ -165,4 +205,50 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
 
     /* Return the formatted log entry string */
     sprintf(logstring, "%s: %d.%d.%d.%d %s", time_str, a, b, c, d, uri);
+}
+
+int readAll(int fd, void *buf, size_t count)
+{
+    void *cursor;
+    void *endOfBuffer;
+    int readResult;
+    cursor = buf;
+    endOfBuffer = buf + count;
+
+    while (cursor < endOfBuffer)
+    {
+        if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
+        {
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
+        if (readResult == 0)
+        {
+            return (cursor - buf);
+        }
+        cursor += readResult;
+    }
+
+    return -1;
+}
+
+int writeAll(int fd, void *buf, size_t count)
+{
+    void *cursor;
+    void *endOfData;
+    int writeResult;
+    cursor = buf;
+    endOfData = buf + count;
+
+    while (cursor < endOfData)
+    {
+        if ((writeResult = write(fd, buf, endOfData - cursor)) == -1)
+        {
+            perror("write");
+            exit(EXIT_FAILURE);
+        }
+        cursor += writeResult;
+    }
+
+    return count;
 }
