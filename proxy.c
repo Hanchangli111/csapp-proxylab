@@ -23,12 +23,13 @@
 /*
  * Function prototypes
  */
-void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len);
-int parse_uri(char *uri, char *target_addr, char *path, int *port);
+void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len);
+int parse_uri(char *uri, char *target_addr, char *path, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, size_t count);
-int readUntil(int fd, void *buf, size_t count, char *pattern);
-int writeAll(int fd, void *buf, size_t count);
+int readUntil(int fd, void *buf, size_t count, const char *pattern);
+int writeAll(int fd, const void *buf, size_t count);
+void fatal(char *message);
 
 /*
  * main - Main routine for the proxy program
@@ -51,8 +52,7 @@ int main(int argc, char **argv)
     /* initalize listen socket */
     if ((listenFD = socket(AF_INET, SOCK_STREAM, 0)) == -1)
     {
-        perror("socket");
-        exit(EXIT_FAILURE);
+        fatal("socket");
     }
 
     /* option for listen socket */
@@ -60,8 +60,7 @@ int main(int argc, char **argv)
     if (setsockopt(listenFD, SOL_SOCKET, SO_REUSEADDR,
                 (const void*) &optval, sizeof(optval)) == -1)
     {
-        perror("setsockopt");
-        exit(EXIT_FAILURE);
+        fatal("setsockopt");
     }
 
     /* prepare address */
@@ -73,15 +72,13 @@ int main(int argc, char **argv)
     /* bind */
     if (bind(listenFD, (const struct sockaddr*) &listenAddr, sizeof(listenAddr)) == -1)
     {
-        perror("bind");
-        exit(EXIT_FAILURE);
+        fatal("bind");
     }
 
     /* listen */
     if (listen(listenFD, LISTENQ) == -1)
     {
-        perror("listen");
-        exit(EXIT_FAILURE);
+        fatal("listen");
     }
     START_INFO;
     printf("Listening on %s:%u\n", inet_ntoa(listenAddr.sin_addr), ntohs(listenAddr.sin_port));
@@ -89,42 +86,44 @@ int main(int argc, char **argv)
 
     for(;;)
     {
-        int connFD;
+        int clientFD;
         struct sockaddr_in clientAddr;
         socklen_t clientAddr_len;
 
         /* accept */
         clientAddr_len = sizeof(clientAddr);
-        connFD = accept(listenFD, (struct sockaddr*) &clientAddr, &clientAddr_len);
+        clientFD = accept(listenFD, (struct sockaddr*) &clientAddr, &clientAddr_len);
         START_SUCCESS;
         printf("Connection from %s:%u\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
         END_MESSAGE;
 
         /* handle */
-        handleClientRequest(connFD, &clientAddr, clientAddr_len);
+        handleClientRequest(clientFD, &clientAddr, clientAddr_len);
 
         /* close */
-        close(connFD);
+        close(clientFD);
         START_SUCCESS;
-        printf("Connection closed\n");
+        printf("Closed connection to client\n");
         END_MESSAGE;
     }
 
     return 0;
 }
 
-void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len)
+void handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len)
 {
+    const char *headerDelimiter = "\r\n\r\n";
     char buf[BUFSIZE];
     int readResult;
     char *http, *request_host, *request_path;
-    int request_port;
+    in_port_t request_port;
     struct addrinfo *serverAddrInfo;
     int getaddrinfoResult;
     struct sockaddr_in serverAddr;
+    int serverFD;
 
     /* read HTTP header */
-    if ((readResult = readUntil(connFD, buf, sizeof(buf), "\r\n\r\n")) == -1)
+    if ((readResult = readUntil(clientFD, buf, sizeof(buf), headerDelimiter)) == -1)
     {
         START_ERROR;
         printf("Buffer full\n");
@@ -132,7 +131,6 @@ void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t c
         return;
     }
 
-    /* forward to stdout */
     START_QUOTE;
     writeAll(STDOUT_FILENO, buf, readResult);
     putchar('\n');
@@ -171,7 +169,52 @@ void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t c
         END_MESSAGE;
     }
 
+    /* prepare serverAddr */
+    serverAddr.sin_port = htons(request_port);
+
     /* connect to end server */
+    if ((serverFD = socket(serverAddr.sin_family, SOCK_STREAM, 0)) == -1)
+    {
+        fatal("socket");
+    }
+
+    START_SUCCESS;
+    printf("Connected to %s\n", inet_ntoa(serverAddr.sin_addr));
+    END_MESSAGE;
+
+    if (connect(serverFD, (struct sockaddr*)(&serverAddr), sizeof(serverAddr)) == -1)
+    {
+        START_ERROR;
+        perror("connect");
+        END_MESSAGE;
+        return;
+    }
+
+    /* forward request */
+    writeAll(serverFD, buf, sizeof(buf));
+    writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter));
+
+    /* get response */
+    if ((readResult = readAll(serverFD, buf, sizeof(buf))) == -1)
+    {
+        START_ERROR;
+        printf("Buffer full\n");
+        END_MESSAGE;
+    }
+    else
+    {
+        START_QUOTE;
+        writeAll(STDOUT_FILENO, buf, readResult);
+        END_MESSAGE;
+
+        /* forward response */
+        writeAll(clientFD, buf, readResult);
+    }
+
+    close(serverFD);
+    START_SUCCESS;
+    printf("Closed connection to server\n");
+    END_MESSAGE;
 }
 
 /*
@@ -182,7 +225,7 @@ void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t c
  * pathname must already be allocated and should be at least MAXLINE
  * bytes. Return -1 if there are any problems.
  */
-int parse_uri(char *uri, char *hostname, char *pathname, int *port)
+int parse_uri(char *uri, char *hostname, char *pathname, in_port_t *port)
 {
     char *hostbegin;
     char *hostend;
@@ -272,8 +315,7 @@ int readAll(int fd, void *buf, size_t count)
     {
         if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
         {
-            perror("read");
-            exit(EXIT_FAILURE);
+            fatal("read");
         }
         if (readResult == 0)
         {
@@ -285,7 +327,7 @@ int readAll(int fd, void *buf, size_t count)
     return -1;
 }
 
-int readUntil(int fd, void *buf, size_t count, char *pattern)
+int readUntil(int fd, void *buf, size_t count, const char *pattern)
 {
     char *cursor;
     char *endOfBuffer;
@@ -298,8 +340,7 @@ int readUntil(int fd, void *buf, size_t count, char *pattern)
     {
         if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
         {
-            perror("read");
-            exit(EXIT_FAILURE);
+            fatal("read");
         }
         if (readResult == 0)
         {
@@ -313,7 +354,7 @@ int readUntil(int fd, void *buf, size_t count, char *pattern)
         *cursor = '\0';
         if ((substr = strstr(buf, pattern)) != NULL)
         {
-            *substr = '\0';
+            *substr = '\0';                 /* TODO remove */
             return (substr - (char*)buf);
         }
     }
@@ -321,23 +362,30 @@ int readUntil(int fd, void *buf, size_t count, char *pattern)
     return -1;
 }
 
-int writeAll(int fd, void *buf, size_t count)
+int writeAll(int fd, const void *buf, size_t count)
 {
     char *cursor;
     char *endOfData;
     int writeResult;
-    cursor = buf;
-    endOfData = buf + count;
+    cursor = (char*)buf;
+    endOfData = (char*)buf + count;
 
     while (cursor < endOfData)
     {
         if ((writeResult = write(fd, buf, endOfData - cursor)) == -1)
         {
-            perror("write");
-            exit(EXIT_FAILURE);
+            fatal("write");
         }
         cursor += writeResult;
     }
 
     return count;
+}
+
+void fatal(char *message)
+{
+    START_ERROR;
+    perror(message);
+    END_MESSAGE;
+    exit(EXIT_FAILURE);
 }
