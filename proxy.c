@@ -114,26 +114,32 @@ int main(int argc, char **argv)
         struct sockaddr_in clientAddr;
         socklen_t clientAddr_len;
 
+#ifdef DEBUG
         /* waiting message */
         START_INFO;
         printf("Listening on %s:%u\n", inet_ntoa(listenAddr.sin_addr), ntohs(listenAddr.sin_port));
         END_MESSAGE;
+#endif
 
         /* accept */
         clientAddr_len = sizeof(clientAddr);
         clientFD = accept(listenFD, (struct sockaddr*) &clientAddr, &clientAddr_len);
+#ifdef DEBUG
         START_SUCCESS;
         printf("Client connection from %s:%u\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
         END_MESSAGE;
+#endif
 
         /* handle */
         handleClientRequest(clientFD, &clientAddr, log);
 
         /* close */
         close(clientFD);
+#ifdef DEBUG
         START_SUCCESS;
         printf("Closed connection to client\n");
         END_MESSAGE;
+#endif
     }
 
     return 0;
@@ -194,11 +200,12 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     if (readResult == -2)
     {
         START_ERROR;
-        printf("Buffer full\n");
+        printf("Buffer for clientRequestHeader is full\n");
         END_MESSAGE;
         return -1;
     }
 
+#ifdef DEBUG
     START_NOTICE;
     printf("Client request:\n");
     END_MESSAGE;
@@ -206,6 +213,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     writeAll(STDOUT_FILENO, clientRequestHeader, strstr(clientRequestHeader, headerDelimiter) - clientRequestHeader);
     putchar('\n');
     END_MESSAGE;
+#endif
 
     /* analyze the request */
     request_host = malloc(MAXLINE);
@@ -213,14 +221,18 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
 
     if (http == NULL || parse_uri(http, request_host, &request_port) == -1)
     {
+#ifdef DEBUG
         START_ERROR;
         printf("Cannot parse client request\n");
         END_MESSAGE;
+#endif
         return -1;
     }
+#ifdef DEBUG
     START_INFO;
     printf("host:\t%s\nport:\t%d\n", request_host, request_port);
     END_MESSAGE;
+#endif
 
     /* DNS lookup & get serverAddr */
     if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
@@ -234,9 +246,11 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     {
         memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
         freeaddrinfo(serverAddrInfo);
+#ifdef DEBUG
         START_INFO;
         printf("resolv:\t%s\n", inet_ntoa(serverAddr.sin_addr));
         END_MESSAGE;
+#endif
     }
 
     /* prepare serverAddr */
@@ -249,9 +263,11 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
         return -1;
     }
 
+#ifdef DEBUG
     START_SUCCESS;
     printf("Connected to %s\n", inet_ntoa(serverAddr.sin_addr));
     END_MESSAGE;
+#endif
 
     if (connect(serverFD, (struct sockaddr*)(&serverAddr), sizeof(serverAddr)) == -1)
     {
@@ -268,9 +284,11 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     {
         return -1;
     }
+#ifdef DEBUG
     START_SUCCESS;
     printf("Forwarded request to server\n");
     END_MESSAGE;
+#endif
 
     /* forward response */
     responseSize = pump(serverFD, clientFD);
@@ -278,15 +296,19 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     {
         return -1;
     }
+#ifdef DEBUG
     START_SUCCESS;
     printf("Forwarded response to client\n");
     END_MESSAGE;
+#endif
 
     /* close serverFD */
     close(serverFD);
+#ifdef DEBUG
     START_SUCCESS;
     printf("Closed connection to server\n");
     END_MESSAGE;
+#endif
 
     /* make log */
     *strstr(http, " ") = '\0';
