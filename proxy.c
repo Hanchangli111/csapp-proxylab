@@ -23,9 +23,11 @@
 /*
  * Function prototypes
  */
-int parse_uri(char *uri, char *target_addr, char *path, int  *port);
+void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len);
+int parse_uri(char *uri, char *target_addr, char *path, int *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, size_t count);
+int readUntil(int fd, void *buf, size_t count, char *pattern);
 int writeAll(int fd, void *buf, size_t count);
 
 /*
@@ -90,8 +92,6 @@ int main(int argc, char **argv)
         int connFD;
         struct sockaddr_in clientAddr;
         socklen_t clientAddr_len;
-        char buf[BUFSIZE];
-        int readResult;
 
         /* accept */
         clientAddr_len = sizeof(clientAddr);
@@ -100,18 +100,8 @@ int main(int argc, char **argv)
         printf("Connection from %s:%u\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
         END_MESSAGE;
 
-        /* read until eof */
-        if ((readResult = readAll(connFD, buf, sizeof(buf))) == -1)
-        {
-            START_ERROR;
-            printf("Buffer full\n");
-            END_MESSAGE;
-        }
-
-        /* forward to stdout */
-        START_QUOTE;
-        writeAll(STDOUT_FILENO, buf, readResult);
-        END_MESSAGE;
+        /* handle */
+        handleClientRequest(connFD, &clientAddr, clientAddr_len);
 
         /* close */
         close(connFD);
@@ -121,6 +111,45 @@ int main(int argc, char **argv)
     }
 
     return 0;
+}
+
+void handleClientRequest(int connFD, struct sockaddr_in *clientAddr, socklen_t clientAddr_len)
+{
+    char buf[BUFSIZE];
+    int readResult;
+    char *http, *request_host, *request_path;
+    int request_port;
+
+    /* read HTTP header */
+    if ((readResult = readUntil(connFD, buf, sizeof(buf), "\r\n\r\n")) == -1)
+    {
+        START_ERROR;
+        printf("Buffer full\n");
+        END_MESSAGE;
+        return;
+    }
+
+    /* forward to stdout */
+    START_QUOTE;
+    writeAll(STDOUT_FILENO, buf, readResult);
+    putchar('\n');
+    END_MESSAGE;
+
+    /* analyze the request */
+    request_host = malloc(MAXLINE);
+    request_path = malloc(MAXLINE);
+    http = strstr(buf, "http://");
+
+    if (http == NULL || parse_uri(http, request_host, request_path, &request_port) == -1)
+    {
+        START_ERROR;
+        printf("Parse error\n");
+        END_MESSAGE;
+        return;
+    }
+    START_INFO;
+    printf("host:\t%s\npath:\t%s\nport:\t%d\n", request_host, request_path, request_port);
+    END_MESSAGE;
 }
 
 /*
@@ -136,6 +165,7 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
     char *hostbegin;
     char *hostend;
     char *pathbegin;
+    char *pathend;
     int len;
 
     if (strncasecmp(uri, "http://", 7) != 0)
@@ -167,7 +197,8 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
     else
     {
         pathbegin++;
-        strcpy(pathname, pathbegin);
+        pathend = strpbrk(pathbegin, " \r\n\0");
+        strncpy(pathname, pathbegin, pathend - pathbegin);
     }
 
     return 0;
@@ -232,10 +263,46 @@ int readAll(int fd, void *buf, size_t count)
     return -1;
 }
 
+int readUntil(int fd, void *buf, size_t count, char *pattern)
+{
+    char *cursor;
+    char *endOfBuffer;
+    int readResult;
+    char *substr;
+    cursor = buf;
+    endOfBuffer = buf + count;
+
+    while (cursor < endOfBuffer)
+    {
+        if ((readResult = read(fd, cursor, (endOfBuffer - cursor))) == -1)
+        {
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
+        if (readResult == 0)
+        {
+            return (cursor - (char*)buf);
+        }
+        cursor += readResult;
+        if (cursor >= endOfBuffer)
+        {
+            return -1;
+        }
+        *cursor = '\0';
+        if ((substr = strstr(buf, pattern)) != NULL)
+        {
+            *substr = '\0';
+            return (substr - (char*)buf);
+        }
+    }
+
+    return -1;
+}
+
 int writeAll(int fd, void *buf, size_t count)
 {
-    void *cursor;
-    void *endOfData;
+    char *cursor;
+    char *endOfData;
     int writeResult;
     cursor = buf;
     endOfData = buf + count;
