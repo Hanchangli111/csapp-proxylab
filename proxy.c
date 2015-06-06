@@ -67,6 +67,9 @@ int main(int argc, char **argv)
     }
     listenPort = atoi(argv[1]);
 
+    /* ignore SIGPIPE */
+    signal(SIGPIPE, SIG_IGN);
+
     /* open the log file */
     if ((log = fopen(LOGFILENAME, "a")) == NULL)
     {
