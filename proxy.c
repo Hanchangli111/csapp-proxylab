@@ -137,7 +137,7 @@ void handleClientRequest(int clientFD)
     printf("Client request:\n");
     END_MESSAGE;
     START_QUOTE;
-    writeAll(STDOUT_FILENO, buf, readResult);
+    writeAll(STDOUT_FILENO, buf, strstr(buf, headerDelimiter) - buf);
     putchar('\n');
     END_MESSAGE;
 
@@ -372,7 +372,7 @@ int readUntil(int fd, void *buf, const size_t count, const char *pattern)
         *cursor = '\0';
         if ((substr = strstr(buf, pattern)) != NULL)
         {
-            return (substr - (char*)buf);
+            return (cursor - (char*)buf);
         }
     }
 
