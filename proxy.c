@@ -4,12 +4,11 @@
  * Student Information:
  *     JangHo Seo<jangho.se@snu.ac.kr>, 2014-18790
  *
- * How this proxy works:
+ * How this concurrent proxy works:
  *  - function main
  *      - parse port number from CLI input
  *      - listen from INADDR_ANY:portnumber
- *      - for each accepted connection (i.e. browser connection), call handleClientRequest
- *      - close connection socket and listen again
+ *      - for each accepted connection (i.e. browser connection), create a thread with handleClientRequest
  *  - function handleClientRequest
  *      - read browser request until blank line encountered, for reading HTTP header
  *      - from request header extract end server host and port number
@@ -18,6 +17,8 @@
  *      - pump server response to browser by repeatedly calling read(2) and write(2)
  *      - close the server socket
  *      - generate a log entry
+ *      - close connection socket
+ *      - free job payload and return
  */
 
 #include "csapp.h"
@@ -228,7 +229,7 @@ void *handleClientRequest(void *job)
         if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
         {
             START_ERROR;
-            printf("DNS lookup failure: %s\n", gai_strerror(getaddrinfoResult));
+            printf("DNS lookup failure\n");
             END_MESSAGE;
             break;
         }
@@ -237,6 +238,7 @@ void *handleClientRequest(void *job)
             memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
             freeaddrinfo(serverAddrInfo);
         }
+        free(request_host);
 
         /* prepare serverAddr */
         serverAddr.sin_port = htons(request_port);
@@ -589,6 +591,6 @@ This function prints string to STDOUT.
 void error(char *message)
 {
     START_ERROR;
-    perror(message);
+    fprintf(stdout, "%s: failure\n", message);
     END_MESSAGE;
 }
