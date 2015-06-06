@@ -37,10 +37,19 @@
 #define DEBUG
 
 
+/* typedefs */
+typedef struct handlerJob
+{
+    int clientFD;
+    struct sockaddr_in clientAddr;
+}
+handlerJob_t;
+
+
 /*
  * Function prototypes
  */
-int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr);
+int handleClientRequest(handlerJob_t *job);
 int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
@@ -123,9 +132,11 @@ int main(int argc, char **argv)
 
     for(;;)
     {
-        int clientFD;
-        struct sockaddr_in clientAddr;
+        handlerJob_t *job;
         socklen_t clientAddr_len;
+
+        /* allocate */
+        job = malloc(sizeof(handlerJob_t));
 
 #ifdef DEBUG
         /* waiting message */
@@ -135,19 +146,19 @@ int main(int argc, char **argv)
 #endif
 
         /* accept */
-        clientAddr_len = sizeof(clientAddr);
-        clientFD = accept(listenFD, (struct sockaddr*) &clientAddr, &clientAddr_len);
+        clientAddr_len = sizeof(struct sockaddr);
+        job->clientFD = accept(listenFD, (struct sockaddr*) &(job->clientAddr), &clientAddr_len);
 #ifdef DEBUG
         START_SUCCESS;
-        printf("Client connection from %s:%u\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
+        printf("Client connection from %s:%u\n", inet_ntoa(job->clientAddr.sin_addr), ntohs(job->clientAddr.sin_port));
         END_MESSAGE;
 #endif
 
         /* handle */
-        handleClientRequest(clientFD, &clientAddr);
+        handleClientRequest(job);
 
         /* close */
-        close(clientFD);
+        close(job->clientFD);
 #ifdef DEBUG
         START_SUCCESS;
         printf("Closed connection to client\n");
@@ -166,10 +177,11 @@ It parses end-server information from clientFD stream and connect accordingly, a
 For this function, socket to client and file pointer to log file should be available.
 
 ARGUMENTS
-int clientFD
-    connection file descriptor from accept(2) system call
-struct sockaddr_in *clientAddr
-    sockaddr descriptor from accept(2) system call
+handlerJob_t *job
+    int clientFD
+        connection file descriptor from accept(2) system call
+    struct sockaddr_in *clientAddr
+        sockaddr descriptor from accept(2) system call
 
 RETURN VALUE
 On failure, -1 is returned. On success, the object size of server response is returned.
@@ -183,8 +195,12 @@ This function logs real-time status to STDOUT, and writes a log entry for each r
 This function calls subroutines with side effects, such as readAll, readUntil and writeAll.
 */
 
-int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr)
+int handleClientRequest(handlerJob_t *job)
 {
+    /* argument */
+    int clientFD = job->clientFD;
+    struct sockaddr_in* clientAddr = &(job->clientAddr);
+
     /* for saving and parsing HTTP request from client */
     const char *headerDelimiter = "\r\n\r\n";
     char clientRequestHeader[BUFSIZE];
@@ -334,6 +350,9 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr)
     {
         fatal("sem_post");
     }
+
+    /* free resource */
+    free(job);
 
     return responseSize;
 }
