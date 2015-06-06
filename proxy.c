@@ -11,7 +11,7 @@
 
 #include "csapp.h"
 
-#define BUFSIZE         1024*1024
+#define BUFSIZE         (1024*1024)
 #define LOGFILENAME     ("proxy.log")
 
 #define START_INFO      do {printf("\033[36m"); fflush(stdout);} while (0)
@@ -133,7 +133,7 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
     struct sockaddr_in serverAddr;
     int serverFD;
     int responseSize;
-    char logRow[MAXLINE];
+    char logEntry[MAXLINE];
 
     /* read HTTP header */
     if ((readResult = readUntil(clientFD, buf, sizeof(buf), headerDelimiter)) == -1)
@@ -226,8 +226,8 @@ int handleClientRequest(int clientFD, struct sockaddr_in *clientAddr, FILE *log)
 
     /* make log */
     *strstr(http, " ") = '\0';
-    format_log_entry(logRow, clientAddr, http, responseSize);
-    fprintf(log, "%s\n", logRow);
+    format_log_entry(logEntry, clientAddr, http, responseSize);
+    fprintf(log, "%s\n", logEntry);
     fflush(log);
 
     return responseSize;
