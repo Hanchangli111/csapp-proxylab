@@ -49,6 +49,7 @@ handlerJob_t;
  * Function prototypes
  */
 void *handleClientRequest(void *job);
+void handleClientRequest_internal(void *job);
 int parse_uri(char *uri, char *target_addr, in_port_t *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 int readAll(int fd, void *buf, const size_t count);
@@ -179,6 +180,17 @@ This function calls subroutines with side effects, such as readAll, readUntil an
 
 void *handleClientRequest(void *job)
 {
+    int clientFD = ((handlerJob_t*)job)->clientFD;
+    handleClientRequest_internal(job);
+
+    /* finally */
+    free(job);
+    close(clientFD);
+    return NULL;
+}
+
+void handleClientRequest_internal(void *job)
+{
     /* argument */
     int clientFD = ((handlerJob_t*)job)->clientFD;
     struct sockaddr_in* clientAddr = &(((handlerJob_t*)job)->clientAddr);
@@ -200,107 +212,98 @@ void *handleClientRequest(void *job)
     char logEntry[MAXLINE];
     int responseSize;
 
-    do
+    /* read HTTP header */
+    readResult = readUntil(clientFD, clientRequestHeader, sizeof(clientRequestHeader), headerDelimiter);
+    if (readResult == -1)
     {
-        /* read HTTP header */
-        readResult = readUntil(clientFD, clientRequestHeader, sizeof(clientRequestHeader), headerDelimiter);
-        if (readResult == -1)
-        {
-            break;
-        }
-        if (readResult == -2)
-        {
-            START_ERROR;
-            printf("Buffer for clientRequestHeader is full\n");
-            END_MESSAGE;
-            break;
-        }
-
-        /* analyze the request */
-        request_host = malloc(MAXLINE);
-        http = strstr(clientRequestHeader, "http://");
-
-        if (http == NULL || parse_uri(http, request_host, &request_port) == -1)
-        {
-            break;
-        }
-
-        /* DNS lookup & get serverAddr */
-        if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
-        {
-            free(request_host);
-            START_ERROR;
-            printf("DNS lookup failure\n");
-            END_MESSAGE;
-            break;
-        }
-        else
-        {
-            memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
-            freeaddrinfo(serverAddrInfo);
-        }
-        free(request_host);
-
-        /* prepare serverAddr */
-        serverAddr.sin_port = htons(request_port);
-
-        /* connect to end server */
-        if ((serverFD = socket(serverAddr.sin_family, SOCK_STREAM, 0)) == -1)
-        {
-            error("socket");
-            break;
-        }
-
-        if (connect(serverFD, (struct sockaddr*)(&serverAddr), sizeof(serverAddr)) == -1)
-        {
-            error("connect");
-            close(serverFD);
-            break;
-        }
-
-        /* forward request */
-        if (writeAll(serverFD, clientRequestHeader, readResult) == -1)
-        {
-            close(serverFD);
-            break;
-        }
-        if (writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter)) == -1)
-        {
-            close(serverFD);
-            break;
-        }
-
-        /* forward response */
-        responseSize = pump(serverFD, clientFD);
-        if (responseSize == -1)
-        {
-            close(serverFD);
-            break;
-        }
-
-        /* close serverFD */
-        close(serverFD);
-
-        /* make log */
-        *strstr(http, " ") = '\0';
-        format_log_entry(logEntry, clientAddr, http, responseSize);
-        if (sem_wait(&logSem) == -1)
-        {
-            fatal("sem_wait");
-        }
-        fprintf(logFile, "%s\n", logEntry);
-        fflush(logFile);
-        if (sem_post(&logSem) == -1)
-        {
-            fatal("sem_post");
-        }
+        return;
     }
-    while (0);
+    if (readResult == -2)
+    {
+        START_ERROR;
+        printf("Buffer for clientRequestHeader is full\n");
+        END_MESSAGE;
+        return;
+    }
 
-    /* finally */
-    free(job);
-    close(clientFD);
-    return NULL;
+    /* analyze the request */
+    request_host = malloc(MAXLINE);
+    http = strstr(clientRequestHeader, "http://");
+
+    if (http == NULL || parse_uri(http, request_host, &request_port) == -1)
+    {
+        return;
+    }
+
+    /* DNS lookup & get serverAddr */
+    if ((getaddrinfoResult = getaddrinfo(request_host, NULL, NULL, &serverAddrInfo)) != 0)
+    {
+        free(request_host);
+        START_ERROR;
+        printf("DNS lookup failure\n");
+        END_MESSAGE;
+        return;
+    }
+    else
+    {
+        memcpy(&serverAddr, serverAddrInfo->ai_addr, sizeof(struct sockaddr));
+        freeaddrinfo(serverAddrInfo);
+    }
+    free(request_host);
+
+    /* prepare serverAddr */
+    serverAddr.sin_port = htons(request_port);
+
+    /* connect to end server */
+    if ((serverFD = socket(serverAddr.sin_family, SOCK_STREAM, 0)) == -1)
+    {
+        error("socket");
+        return;
+    }
+
+    if (connect(serverFD, (struct sockaddr*)(&serverAddr), sizeof(serverAddr)) == -1)
+    {
+        error("connect");
+        close(serverFD);
+        return;
+    }
+
+    /* forward request */
+    if (writeAll(serverFD, clientRequestHeader, readResult) == -1)
+    {
+        close(serverFD);
+        return;
+    }
+    if (writeAll(serverFD, headerDelimiter, sizeof(headerDelimiter)) == -1)
+    {
+        close(serverFD);
+        return;
+    }
+
+    /* forward response */
+    responseSize = pump(serverFD, clientFD);
+    if (responseSize == -1)
+    {
+        close(serverFD);
+        return;
+    }
+
+    /* close serverFD */
+    close(serverFD);
+
+    /* make log */
+    *strstr(http, " ") = '\0';
+    format_log_entry(logEntry, clientAddr, http, responseSize);
+    if (sem_wait(&logSem) == -1)
+    {
+        fatal("sem_wait");
+    }
+    fprintf(logFile, "%s\n", logEntry);
+    fflush(logFile);
+    if (sem_post(&logSem) == -1)
+    {
+        fatal("sem_post");
+    }
 }
 
 /*
